@@ -44,6 +44,9 @@ codexctl fork THREAD_ID          fork a thread
 codexctl interrupt THREAD_ID [TURN_ID]
 codexctl rename THREAD_ID NAME
 codexctl archive THREAD_ID
+codexctl purge --dry-run
+codexctl purge --archive --confirm
+codexctl purge --delete --confirm
 ```
 
 The dashboard refreshes the active and archived thread lists, hydrates the
@@ -68,6 +71,29 @@ currently loaded in memory. It is not a deletion candidate by itself, so
 `codexctl` does not purge those threads automatically. Use `archive` to remove
 a thread from the active list while preserving its history; permanent deletion
 should be an explicit, separately confirmed operation.
+
+To review matching threads without changing anything:
+
+```sh
+codexctl purge --dry-run
+```
+
+To archive them, preserving history:
+
+```sh
+codexctl purge --archive --confirm
+```
+
+To permanently delete them, including archived matches, use the separate
+destructive mode. It prints the same candidate list and then requires both
+`--confirm` and typing `DELETE` at the prompt:
+
+```sh
+codexctl purge --delete --confirm
+```
+
+Use `--active-only` with any of these commands to exclude archived threads
+from the candidate list.
 
 Use `--cwd PATH` to filter threads to an exact working directory, and
 `--active-only` to omit archived threads.

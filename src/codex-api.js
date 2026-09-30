@@ -54,6 +54,10 @@ export class CodexApi {
     return this.client.request("thread/archive", { threadId });
   }
 
+  delete(threadId) {
+    return this.client.request("thread/delete", { threadId });
+  }
+
   approve(requestId, decision = "accept") {
     this.client.respond(requestId, { decision });
   }

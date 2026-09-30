@@ -11,6 +11,9 @@ export function parseArgs(argv) {
     json: false,
     includeArchived: true,
     refreshMs: Number(process.env.CODEXCTL_REFRESH_MS ?? 1000),
+    purgeAction: null,
+    confirm: false,
+    dryRun: false,
     command: "dashboard",
     positional: [],
   };
@@ -22,6 +25,10 @@ export function parseArgs(argv) {
     else if (arg === "--json") options.json = true;
     else if (arg === "--active-only") options.includeArchived = false;
     else if (arg === "--refresh-ms") options.refreshMs = Number(args.shift());
+    else if (arg === "--archive") options.purgeAction = "archive";
+    else if (arg === "--delete" || arg === "--permanent") options.purgeAction = "delete";
+    else if (arg === "--confirm") options.confirm = true;
+    else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else options.positional.push(arg);
   }
@@ -41,6 +48,9 @@ Usage:
   codexctl interrupt <thread-id> [turn-id]
   codexctl rename <thread-id> <name>
   codexctl archive <thread-id>
+  codexctl purge [--dry-run]
+  codexctl purge --archive --confirm
+  codexctl purge --delete --confirm
 
 Dashboard commands:
   refresh, attach ID, resume ID, fork ID, interrupt ID [TURN]
@@ -52,6 +62,11 @@ Options:
   --active-only     Hide archived threads
   --json            Emit machine-readable output for list
   --refresh-ms N    Refresh the dashboard every N milliseconds (default: 1000)
+
+Purge modes:
+  purge                 Preview all notLoaded threads (dry run)
+  purge --archive       Archive notLoaded threads after confirmation
+  purge --delete        Permanently delete notLoaded threads after confirmation
 `;
 }
 
@@ -87,14 +102,14 @@ export async function runCli(argv = process.argv.slice(2), dependencies = {}) {
     if (options.command === "dashboard" || options.command === "watch") {
       await runDashboard({ api, client, options, stdout, stderr, approvals, input: dependencies.stdin ?? process.stdin });
     } else {
-      await runCommand(options, { api, client, stdout, stderr, approvals });
+      await runCommand(options, { api, client, stdout, stderr, approvals, input: dependencies.stdin ?? process.stdin });
     }
   } finally {
     if (options.command !== "dashboard" || dependencies.keepOpen !== true) await client.close();
   }
 }
 
-async function runCommand(options, { api, client, stdout, approvals }) {
+async function runCommand(options, { api, client, stdout, approvals, input = process.stdin }) {
   const [threadId, ...rest] = options.positional;
   switch (options.command) {
     case "list": {
@@ -136,6 +151,9 @@ async function runCommand(options, { api, client, stdout, approvals }) {
       await api.archive(threadId);
       stdout.write(`Archived ${threadId}\n`);
       return;
+    case "purge":
+      await purgeNotLoaded(options, { api, stdout, input });
+      return;
     case "approve": {
       const decision = rest[0] ?? "accept";
       const request = approvals.get(String(threadId));
@@ -148,6 +166,62 @@ async function runCommand(options, { api, client, stdout, approvals }) {
     default:
       throw new Error(`Unknown command: ${options.command}`);
   }
+}
+
+export async function purgeNotLoaded(options, { api, stdout, input }) {
+  const candidates = (await api.listThreads({
+    cwd: options.cwd,
+    includeArchived: options.includeArchived,
+  })).filter(isNotLoadedThread);
+
+  if (!candidates.length) {
+    stdout.write("No notLoaded threads found.\n");
+    return;
+  }
+
+  stdout.write(`notLoaded candidates (${candidates.length}):\n${formatThreads(candidates)}\n`);
+  if (options.dryRun || !options.purgeAction) {
+    stdout.write("\nDry run only. Choose --archive or --delete to take action.\n");
+    return;
+  }
+  if (!options.confirm) {
+    throw new Error(`Refusing to ${options.purgeAction} ${candidates.length} threads without --confirm.`);
+  }
+
+  const verb = options.purgeAction === "delete" ? "DELETE" : "ARCHIVE";
+  const confirmed = await askForConfirmation(input, stdout, `Type ${verb} to confirm ${options.purgeAction} of these threads: `, verb);
+  if (!confirmed) {
+    stdout.write("No changes made.\n");
+    return;
+  }
+
+  const targets = options.purgeAction === "archive"
+    ? candidates.filter((thread) => !thread.isArchived)
+    : candidates;
+  if (!targets.length) {
+    stdout.write("All matching threads are already archived; no changes made.\n");
+    return;
+  }
+
+  for (const thread of targets) {
+    if (options.purgeAction === "archive") await api.archive(thread.id);
+    else await api.delete(thread.id);
+  }
+  stdout.write(`${options.purgeAction === "archive" ? "Archived" : "Deleted"} ${targets.length} thread${targets.length === 1 ? "" : "s"}.\n`);
+}
+
+export function isNotLoadedThread(thread) {
+  return thread?.status?.type === "notLoaded";
+}
+
+function askForConfirmation(input, output, prompt, expected) {
+  const rl = createInterface({ input, output, terminal: false });
+  return new Promise((resolve) => {
+    rl.question(prompt, (answer) => {
+      rl.close();
+      resolve(answer.trim() === expected);
+    });
+  });
 }
 
 async function runDashboard({ api, client, options, stdout, stderr, approvals, input }) {
@@ -235,7 +309,10 @@ async function runDashboard({ api, client, options, stdout, stderr, approvals, i
             approvals.delete(String(requestId));
             stdout.write(`Approval ${requestId}: ${decision}\n`);
           } else {
-            await runCommand(parsed, { api, client, stdout, stderr, approvals });
+            if (parsed.command === "purge") {
+              throw new Error("Run purge as a one-shot command so its confirmation prompt is isolated from the dashboard.");
+            }
+            await runCommand(parsed, { api, client, stdout, stderr, approvals, input });
           }
           await render({ force: true });
         }
