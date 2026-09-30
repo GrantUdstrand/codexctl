@@ -45,6 +45,8 @@ codexctl interrupt THREAD_ID [TURN_ID]
 codexctl rename THREAD_ID NAME
 codexctl archive THREAD_ID
 codexctl purge --dry-run
+codexctl purge --older-than 7d --dry-run
+codexctl purge --older-than 7d --delete --confirm
 codexctl purge --archive --confirm
 codexctl purge --delete --confirm
 ```
@@ -90,6 +92,17 @@ destructive mode. It prints the same candidate list and then requires both
 
 ```sh
 codexctl purge --delete --confirm
+```
+
+For age-based cleanup, use `--older-than` with a duration such as `7d`, `1w`,
+or `24h`. Age cleanup considers all matching active and archived sessions but
+automatically excludes sessions currently marked active or writing. If a
+writer starts after the preview, that individual session is skipped and the
+rest of the cleanup continues.
+
+```sh
+codexctl purge --older-than 7d --dry-run
+codexctl purge --older-than 7d --delete --confirm
 ```
 
 Use `--active-only` with any of these commands to exclude archived threads

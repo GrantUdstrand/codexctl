@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Readable } from "node:stream";
-import { isNotLoadedThread, parseArgs, purgeNotLoaded, resolveThreadId } from "../src/cli.js";
+import { isActiveThread, isNotLoadedThread, parseAge, parseArgs, purgeNotLoaded, resolveThreadId, selectPurgeThreads } from "../src/cli.js";
 
 test("parses dashboard options and positional arguments", () => {
   const options = parseArgs(["watch", "--json", "--cwd", "/tmp/project", "--refresh-ms", "250"]);
@@ -12,6 +12,7 @@ test("parses dashboard options and positional arguments", () => {
     includeArchived: true,
     refreshMs: 250,
     purgeAction: null,
+    olderThanSeconds: null,
     confirm: false,
     dryRun: false,
     positional: [],
@@ -26,12 +27,16 @@ test("parses safe purge modes", () => {
     includeArchived: true,
     refreshMs: 1000,
     purgeAction: "delete",
+    olderThanSeconds: null,
     confirm: true,
     dryRun: false,
     positional: [],
   });
   assert.equal(isNotLoadedThread({ status: { type: "notLoaded" } }), true);
   assert.equal(isNotLoadedThread({ status: { type: "idle" } }), false);
+  assert.equal(parseAge("7d"), 7 * 86_400);
+  assert.equal(parseAge("1w"), 7 * 86_400);
+  assert.throws(() => parseAge("last-week"), /Invalid --older-than/);
 });
 
 test("resolves unique displayed thread prefixes", () => {
@@ -76,4 +81,36 @@ test("permanent purge requires confirmation text before deleting", async () => {
     { api, stdout: { write() {} }, input: Readable.from(["DELETE\n"]) },
   );
   assert.deepEqual(calls, ["not-loaded"]);
+});
+
+test("age purge excludes active writers and keeps going after a race", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const old = now - 8 * 86_400;
+  const threads = [
+    { id: "active", updatedAt: old, status: { type: "active" } },
+    { id: "race", updatedAt: old, status: { type: "notLoaded" } },
+    { id: "safe", updatedAt: old, status: { type: "notLoaded" } },
+    { id: "recent", updatedAt: now - 86_400, status: { type: "idle" } },
+  ];
+  const selection = selectPurgeThreads(threads, { olderThanSeconds: 7 * 86_400 }, now);
+  assert.deepEqual(selection.candidates.map((thread) => thread.id), ["race", "safe"]);
+  assert.deepEqual(selection.skippedActive.map((thread) => thread.id), ["active"]);
+  assert.equal(isActiveThread(threads[0]), true);
+
+  const calls = [];
+  let output = "";
+  const api = {
+    async listThreads() { return threads; },
+    async delete(id) {
+      if (id === "race") throw new Error("already has an active writer");
+      calls.push(id);
+    },
+  };
+  await purgeNotLoaded(
+    { cwd: null, includeArchived: true, olderThanSeconds: 7 * 86_400, dryRun: false, purgeAction: "delete", confirm: true },
+    { api, stdout: { write(value) { output += value; } }, input: Readable.from(["DELETE\n"]) },
+  );
+  assert.deepEqual(calls, ["safe"]);
+  assert.match(output, /Skipping 1 active\/writing thread/);
+  assert.match(output, /already has an active writer/);
 });

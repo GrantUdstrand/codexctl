@@ -14,6 +14,7 @@ export function parseArgs(argv) {
     includeArchived: true,
     refreshMs: Number(process.env.CODEXCTL_REFRESH_MS ?? 1000),
     purgeAction: null,
+    olderThanSeconds: null,
     confirm: false,
     dryRun: false,
     command: "dashboard",
@@ -29,6 +30,7 @@ export function parseArgs(argv) {
     else if (arg === "--refresh-ms") options.refreshMs = Number(args.shift());
     else if (arg === "--archive") options.purgeAction = "archive";
     else if (arg === "--delete" || arg === "--permanent") options.purgeAction = "delete";
+    else if (arg === "--older-than") options.olderThanSeconds = parseAge(args.shift());
     else if (arg === "--confirm") options.confirm = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
@@ -51,6 +53,8 @@ Usage:
   codexctl rename <thread-id> <name>
   codexctl archive <thread-id>
   codexctl purge [--dry-run]
+  codexctl purge --older-than 7d --dry-run
+  codexctl purge --older-than 7d --delete --confirm
   codexctl purge --archive --confirm
   codexctl purge --delete --confirm
 
@@ -67,6 +71,7 @@ Options:
 
 Purge modes:
   purge                 Preview all notLoaded threads (dry run)
+  purge --older-than 7d  Preview sessions older than seven days
   purge --archive       Archive notLoaded threads after confirmation
   purge --delete        Permanently delete notLoaded threads after confirmation
 `;
@@ -171,17 +176,23 @@ async function runCommand(options, { api, client, stdout, approvals, input = pro
 }
 
 export async function purgeNotLoaded(options, { api, stdout, input }) {
-  const candidates = (await api.listThreads({
+  const threads = await api.listThreads({
     cwd: options.cwd,
     includeArchived: options.includeArchived,
-  })).filter(isNotLoadedThread);
+  });
+  const { candidates, skippedActive } = selectPurgeThreads(threads, options);
+  const selector = options.olderThanSeconds == null ? "notLoaded" : `older than ${formatAge(options.olderThanSeconds)}`;
+
+  if (skippedActive.length) {
+    stdout.write(`Skipping ${skippedActive.length} active/writing thread${skippedActive.length === 1 ? "" : "s"}: ${skippedActive.map((thread) => shortId(thread.id)).join(", ")}\n`);
+  }
 
   if (!candidates.length) {
-    stdout.write("No notLoaded threads found.\n");
+    stdout.write(`No eligible ${selector} threads found.\n`);
     return;
   }
 
-  stdout.write(`notLoaded candidates (${candidates.length}):\n${formatThreads(candidates)}\n`);
+  stdout.write(`${selector} candidates (${candidates.length}):\n${formatThreads(candidates)}\n`);
   if (options.dryRun || !options.purgeAction) {
     stdout.write("\nDry run only. Choose --archive or --delete to take action.\n");
     return;
@@ -205,15 +216,57 @@ export async function purgeNotLoaded(options, { api, stdout, input }) {
     return;
   }
 
+  const completed = [];
+  const failed = [];
   for (const thread of targets) {
-    if (options.purgeAction === "archive") await api.archive(thread.id);
-    else await api.delete(thread.id);
+    try {
+      if (options.purgeAction === "archive") await api.archive(thread.id);
+      else await api.delete(thread.id);
+      completed.push(thread);
+    } catch (error) {
+      failed.push({ thread, error });
+    }
   }
-  stdout.write(`${options.purgeAction === "archive" ? "Archived" : "Deleted"} ${targets.length} thread${targets.length === 1 ? "" : "s"}.\n`);
+  stdout.write(`${options.purgeAction === "archive" ? "Archived" : "Deleted"} ${completed.length} thread${completed.length === 1 ? "" : "s"}.\n`);
+  if (failed.length) {
+    stdout.write(`Skipped ${failed.length} thread${failed.length === 1 ? "" : "s"} that could not be changed:\n`);
+    for (const { thread, error } of failed) stdout.write(`  ${thread.id}: ${error.message}\n`);
+  }
 }
 
 export function isNotLoadedThread(thread) {
   return thread?.status?.type === "notLoaded";
+}
+
+export function isActiveThread(thread) {
+  return thread?.status?.type === "active"
+    || (thread?.turns ?? []).some((turn) => turn.status === "inProgress");
+}
+
+export function selectPurgeThreads(threads, options, nowSeconds = Date.now() / 1000) {
+  const matches = options.olderThanSeconds == null
+    ? threads.filter(isNotLoadedThread)
+    : threads.filter((thread) => Number.isFinite(thread.updatedAt)
+      && thread.updatedAt < nowSeconds - options.olderThanSeconds);
+  return {
+    candidates: matches.filter((thread) => !isActiveThread(thread)),
+    skippedActive: matches.filter(isActiveThread),
+  };
+}
+
+export function parseAge(value) {
+  const match = /^(\d+(?:\.\d+)?)([smhdw])$/i.exec(String(value ?? "").trim());
+  if (!match) throw new Error("Invalid --older-than value; use a duration such as 7d, 1w, or 24h.");
+  const amount = Number(match[1]);
+  const multipliers = { s: 1, m: 60, h: 3600, d: 86_400, w: 604_800 };
+  return amount * multipliers[match[2].toLowerCase()];
+}
+
+function formatAge(seconds) {
+  if (seconds % 604_800 === 0) return `${seconds / 604_800}w`;
+  if (seconds % 86_400 === 0) return `${seconds / 86_400}d`;
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+  return `${seconds}s`;
 }
 
 function askForConfirmation(input, output, prompt, expected) {
