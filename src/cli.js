@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+import { realpathSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 import { AppServerClient } from "./app-server-client.js";
 import { activeTurnId, CodexApi, latestActivity } from "./codex-api.js";
 import { formatThread, formatThreads, shortId, statusLabel } from "./format.js";
@@ -349,7 +351,16 @@ export function resolveThreadId(value, threads) {
   throw new Error(`No thread matches ${value}. Run refresh and try again.`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   runCli().catch((error) => {
     process.stderr.write(`codexctl: ${error.message}\n`);
     process.exitCode = 1;
