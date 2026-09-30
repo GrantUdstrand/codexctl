@@ -50,6 +50,11 @@ The dashboard refreshes the active and archived thread lists, hydrates the
 thread history needed for latest-activity display, and shows runtime status
 including `waitingOnApproval` and `waitingOnUserInput` flags.
 
+The dashboard is live by default: it refreshes every second while keeping the
+command prompt available. Use `codexctl watch` for the explicit live-dashboard
+command, or override the interval with `--refresh-ms N` or the
+`CODEXCTL_REFRESH_MS` environment variable.
+
 Inside the dashboard, use `refresh`, `attach ID`, `resume ID`, `fork ID`,
 `interrupt ID [TURN]`, `rename ID NAME`, `archive ID`, `approvals`, or
 `approve REQUEST_ID accept|decline|cancel`. Press `quit` or `Ctrl-D` to exit.
@@ -57,6 +62,12 @@ Inside the dashboard, use `refresh`, `attach ID`, `resume ID`, `fork ID`,
 Approval requests are connection-scoped App Server callbacks. They appear in
 the dashboard while the associated Codex turn is running; an approval request
 cannot be approved later by starting a separate `codexctl approve` process.
+
+`notLoaded` is a normal runtime status for a persisted thread that is not
+currently loaded in memory. It is not a deletion candidate by itself, so
+`codexctl` does not purge those threads automatically. Use `archive` to remove
+a thread from the active list while preserving its history; permanent deletion
+should be an explicit, separately confirmed operation.
 
 Use `--cwd PATH` to filter threads to an exact working directory, and
 `--active-only` to omit archived threads.

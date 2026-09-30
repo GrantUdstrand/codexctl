@@ -3,11 +3,13 @@ import test from "node:test";
 import { parseArgs, resolveThreadId } from "../src/cli.js";
 
 test("parses dashboard options and positional arguments", () => {
-  assert.deepEqual(parseArgs(["list", "--json", "--cwd", "/tmp/project"]), {
-    command: "list",
+  const options = parseArgs(["watch", "--json", "--cwd", "/tmp/project", "--refresh-ms", "250"]);
+  assert.deepEqual(options, {
+    command: "watch",
     cwd: "/tmp/project",
     json: true,
     includeArchived: true,
+    refreshMs: 250,
     positional: [],
   });
 });

@@ -6,7 +6,14 @@ import { activeTurnId, CodexApi, latestActivity } from "./codex-api.js";
 import { formatThread, formatThreads, shortId, statusLabel } from "./format.js";
 
 export function parseArgs(argv) {
-  const options = { cwd: null, json: false, includeArchived: true, command: "dashboard", positional: [] };
+  const options = {
+    cwd: null,
+    json: false,
+    includeArchived: true,
+    refreshMs: Number(process.env.CODEXCTL_REFRESH_MS ?? 1000),
+    command: "dashboard",
+    positional: [],
+  };
   const args = [...argv];
   if (args[0] && !args[0].startsWith("-")) options.command = args.shift();
   while (args.length) {
@@ -14,6 +21,7 @@ export function parseArgs(argv) {
     if (arg === "--cwd") options.cwd = args.shift();
     else if (arg === "--json") options.json = true;
     else if (arg === "--active-only") options.includeArchived = false;
+    else if (arg === "--refresh-ms") options.refreshMs = Number(args.shift());
     else if (arg === "--help" || arg === "-h") options.help = true;
     else options.positional.push(arg);
   }
@@ -25,6 +33,7 @@ export function helpText() {
 
 Usage:
   codexctl                         Open the interactive dashboard
+  codexctl watch                   Open the live-refreshing dashboard
   codexctl list [--json]           List active and archived threads
   codexctl attach <thread-id>      Resume and inspect a thread
   codexctl resume <thread-id>      Resume a thread
@@ -42,6 +51,7 @@ Options:
   --cwd PATH        Only show threads whose working directory matches PATH
   --active-only     Hide archived threads
   --json            Emit machine-readable output for list
+  --refresh-ms N    Refresh the dashboard every N milliseconds (default: 1000)
 `;
 }
 
@@ -74,7 +84,7 @@ export async function runCli(argv = process.argv.slice(2), dependencies = {}) {
 
   await client.connect();
   try {
-    if (options.command === "dashboard") {
+    if (options.command === "dashboard" || options.command === "watch") {
       await runDashboard({ api, client, options, stdout, stderr, approvals, input: dependencies.stdin ?? process.stdin });
     } else {
       await runCommand(options, { api, client, stdout, stderr, approvals });
@@ -144,66 +154,100 @@ async function runDashboard({ api, client, options, stdout, stderr, approvals, i
   let threads = [];
   let attachedThreadId = null;
   let refreshing = false;
+  let rendering = false;
+  let rl;
+  const cache = new Map();
 
-  const refresh = async () => {
+  const refresh = async (force = false) => {
     if (refreshing) return;
     refreshing = true;
     try {
-      threads = await loadThreads(api, options, { hydrate: true });
+      const summaries = await api.listThreads({ cwd: options.cwd, includeArchived: options.includeArchived });
+      threads = await Promise.all(summaries.map(async (summary) => {
+        const cached = cache.get(summary.id);
+        if (!force && cached && cached.updatedAt === summary.updatedAt && cached.isArchived === summary.isArchived) {
+          return cached;
+        }
+        try {
+          const detail = await api.readThread(summary.id);
+          const thread = { ...summary, ...detail, isArchived: summary.isArchived };
+          cache.set(summary.id, thread);
+          return thread;
+        } catch {
+          cache.set(summary.id, summary);
+          return summary;
+        }
+      }));
+      const currentIds = new Set(summaries.map((summary) => summary.id));
+      for (const id of cache.keys()) if (!currentIds.has(id)) cache.delete(id);
     } finally {
       refreshing = false;
     }
   };
 
-  const render = async () => {
-    await refresh();
-    stdout.write("\n\x1b[2J\x1b[H");
-    stdout.write("codexctl — Codex App Server dashboard\n\n");
-    stdout.write(`${formatThreads(threads)}\n\n`);
-    stdout.write(`pending approvals: ${approvals.size}${attachedThreadId ? `  attached: ${shortId(attachedThreadId)}` : ""}\n`);
-    stdout.write("Commands: attach ID | resume ID | fork ID | interrupt ID [TURN] | rename ID NAME | archive ID | approvals | approve REQUEST DECISION | refresh | help | quit\n");
+  const render = async ({ force = false } = {}) => {
+    if (rendering) return;
+    rendering = true;
+    try {
+      await refresh(force);
+      stdout.write("\n\x1b[2J\x1b[H");
+      stdout.write("codexctl — Codex App Server dashboard\n\n");
+      stdout.write(`${formatThreads(threads)}\n\n`);
+      stdout.write(`live refresh: every ${options.refreshMs}ms  pending approvals: ${approvals.size}${attachedThreadId ? `  attached: ${shortId(attachedThreadId)}` : ""}\n`);
+      stdout.write("Commands: attach ID | resume ID | fork ID | interrupt ID [TURN] | rename ID NAME | archive ID | approvals | approve REQUEST DECISION | refresh | help | quit\n");
+      if (rl) rl.prompt(true);
+    } finally {
+      rendering = false;
+    }
   };
 
-  await render();
-  const rl = createInterface({ input, output: stdout, terminal: Boolean(input.isTTY && stdout.isTTY), prompt: "codexctl> " });
+  await render({ force: true });
+  rl = createInterface({ input, output: stdout, terminal: Boolean(input.isTTY && stdout.isTTY), prompt: "codexctl> " });
   rl.prompt();
-  for await (const line of rl) {
-    const command = line.trim();
-    if (!command) {
-      rl.prompt();
-      continue;
-    }
-    if (command === "quit" || command === "exit" || command === "q") break;
-    try {
-      if (command === "help") stdout.write(`\n${helpText()}\n`);
-      else if (command === "refresh") await render();
-      else if (command === "approvals") {
-        for (const [id, request] of approvals) stdout.write(`${id}: ${request.params?.command ?? request.params?.reason ?? request.method}\n`);
-      } else {
-        const parsed = parseArgs(command.split(/\s+/));
-        if (["attach", "resume", "fork", "interrupt", "rename", "archive"].includes(parsed.command)) {
-          parsed.positional[0] = resolveThreadId(parsed.positional[0], threads);
-        }
-        if (parsed.command === "attach") attachedThreadId = parsed.positional[0];
-        if (parsed.command === "approve") {
-          const requestId = parsed.positional[0];
-          const decision = parsed.positional[1] ?? "accept";
-          const request = approvals.get(String(requestId));
-          if (!request) throw new Error(`Approval request ${requestId} is not pending.`);
-          client.respond(request.id, { decision });
-          approvals.delete(String(requestId));
-          stdout.write(`Approval ${requestId}: ${decision}\n`);
-        } else {
-          await runCommand(parsed, { api, client, stdout, stderr, approvals });
-        }
-        await render();
+  const timer = setInterval(() => {
+    render().catch((error) => stderr.write(`Refresh error: ${error.message}\n`));
+  }, Math.max(100, options.refreshMs || 1000));
+  try {
+    for await (const line of rl) {
+      const command = line.trim();
+      if (!command) {
+        rl.prompt();
+        continue;
       }
-    } catch (error) {
-      stderr.write(`Error: ${error.message}\n`);
+      if (command === "quit" || command === "exit" || command === "q") break;
+      try {
+        if (command === "help") stdout.write(`\n${helpText()}\n`);
+        else if (command === "refresh") await render({ force: true });
+        else if (command === "approvals") {
+          for (const [id, request] of approvals) stdout.write(`${id}: ${request.params?.command ?? request.params?.reason ?? request.method}\n`);
+        } else {
+          const parsed = parseArgs(command.split(/\s+/));
+          if (["attach", "resume", "fork", "interrupt", "rename", "archive"].includes(parsed.command)) {
+            parsed.positional[0] = resolveThreadId(parsed.positional[0], threads);
+          }
+          if (parsed.command === "attach") attachedThreadId = parsed.positional[0];
+          if (parsed.command === "approve") {
+            const requestId = parsed.positional[0];
+            const decision = parsed.positional[1] ?? "accept";
+            const request = approvals.get(String(requestId));
+            if (!request) throw new Error(`Approval request ${requestId} is not pending.`);
+            client.respond(request.id, { decision });
+            approvals.delete(String(requestId));
+            stdout.write(`Approval ${requestId}: ${decision}\n`);
+          } else {
+            await runCommand(parsed, { api, client, stdout, stderr, approvals });
+          }
+          await render({ force: true });
+        }
+      } catch (error) {
+        stderr.write(`Error: ${error.message}\n`);
+      }
+      rl.prompt();
     }
-    rl.prompt();
+  } finally {
+    clearInterval(timer);
+    rl.close();
   }
-  rl.close();
 }
 
 async function loadThreads(api, options, { hydrate = false } = {}) {
