@@ -48,6 +48,7 @@ test("maps lifecycle operations to App Server methods", async () => {
   await api.startTurn("t1", "Run the tests");
   await api.steer("t1", "Focus on the failing test", "turn1");
   await api.unsubscribe("t1");
+  await api.compact("t1");
   await api.fork("t1");
   await api.interrupt("t1", "turn1");
   await api.rename("t1", "New name");
@@ -59,6 +60,7 @@ test("maps lifecycle operations to App Server methods", async () => {
     "turn/start",
     "turn/steer",
     "thread/unsubscribe",
+    "thread/compact/start",
     "thread/fork",
     "turn/interrupt",
     "thread/name/set",

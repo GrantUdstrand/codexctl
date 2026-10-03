@@ -52,6 +52,7 @@ Usage:
   codexctl resume <thread-id>      Resume a thread
   codexctl fork <thread-id>        Fork a thread
   codexctl interrupt <thread-id> [turn-id]
+  codexctl compact <thread-id>
   codexctl rename <thread-id> <name>
   codexctl archive <thread-id>
   codexctl purge [--dry-run]
@@ -61,7 +62,7 @@ Usage:
   codexctl purge --delete --confirm
 
 Dashboard commands:
-  refresh, attach ID, resume ID, fork ID, interrupt ID [TURN]
+  refresh, attach ID, resume ID, fork ID, interrupt ID [TURN], compact ID
   rename ID NAME, archive ID, approvals, approve REQUEST accept|decline|cancel
   help, quit
 
@@ -155,6 +156,10 @@ async function runCommand(options, { api, client, stdout, approvals, input = pro
       stdout.write(`Interrupted ${threadId} turn ${turnId}\n`);
       return;
     }
+    case "compact":
+      await api.compact(threadId);
+      stdout.write(`Compaction started for ${threadId}\n`);
+      return;
     case "rename": {
       if (!rest.length) throw new Error("Usage: codexctl rename THREAD_ID NAME");
       await api.rename(threadId, rest.join(" "));
@@ -330,7 +335,7 @@ async function runDashboard({ api, client, options, stdout, stderr, approvals, i
       stdout.write("codexctl — Codex App Server dashboard\n\n");
       stdout.write(`${formatThreads(threads)}\n\n`);
       stdout.write(`live refresh: every ${options.refreshMs}ms  pending approvals: ${approvals.size}${attachedThreadId ? `  attached: ${shortId(attachedThreadId)}` : ""}\n`);
-      stdout.write("Commands: attach ID | resume ID | fork ID | interrupt ID [TURN] | rename ID NAME | archive ID | approvals | approve REQUEST DECISION | refresh | help | quit\n");
+      stdout.write("Commands: attach ID | resume ID | fork ID | interrupt ID [TURN] | compact ID | rename ID NAME | archive ID | approvals | approve REQUEST DECISION | refresh | help | quit\n");
       if (rl) rl.prompt(true);
     } finally {
       rendering = false;
@@ -358,7 +363,7 @@ async function runDashboard({ api, client, options, stdout, stderr, approvals, i
           for (const [id, request] of approvals) stdout.write(`${id}: ${request.params?.command ?? request.params?.reason ?? request.method}\n`);
         } else {
           const parsed = parseArgs(command.split(/\s+/));
-          if (["attach", "resume", "fork", "interrupt", "rename", "archive"].includes(parsed.command)) {
+          if (["attach", "resume", "fork", "interrupt", "compact", "rename", "archive"].includes(parsed.command)) {
             parsed.positional[0] = resolveThreadId(parsed.positional[0], threads);
           }
           if (parsed.command === "attach") attachedThreadId = parsed.positional[0];
@@ -371,7 +376,7 @@ async function runDashboard({ api, client, options, stdout, stderr, approvals, i
             approvals.delete(String(requestId));
             stdout.write(`Approval ${requestId}: ${decision}\n`);
           } else {
-            if (parsed.command === "purge") {
+          if (parsed.command === "purge") {
               throw new Error("Run purge as a one-shot command so its confirmation prompt is isolated from the dashboard.");
             }
             await runCommand(parsed, { api, client, stdout, stderr, approvals, input });

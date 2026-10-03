@@ -58,6 +58,10 @@ export class CodexApi {
     return this.client.request("thread/unsubscribe", { threadId });
   }
 
+  compact(threadId) {
+    return this.client.request("thread/compact/start", { threadId });
+  }
+
   fork(threadId, options = {}) {
     return this.client.request("thread/fork", { threadId, ...options });
   }

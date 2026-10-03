@@ -97,6 +97,7 @@ export async function runTui({ api, client, options, approvals }) {
   let attachedId = null;
   let refreshing = false;
   let closed = false;
+  let groupByProject = true;
   let statusMessage = "Loading sessions…";
   const cache = new Map();
   let listEntries = [];
@@ -106,7 +107,7 @@ export async function runTui({ api, client, options, approvals }) {
     const currentEntry = listEntries[sessionList.selected];
     cursorIndex = sessionList.selected;
     highlightedId = currentEntry?.thread?.id ?? null;
-    listEntries = buildSessionEntries(threads, attachedId);
+    listEntries = buildSessionEntries(threads, attachedId, { groupByProject });
     const selected = threads.find((thread) => thread.id === (highlightedId ?? selectedId)) ?? null;
     sessionList.setItems(listEntries.map((entry) => entry.label));
     const selectedIndex = highlightedId
@@ -116,7 +117,7 @@ export async function runTui({ api, client, options, approvals }) {
     transcript.setLabel(` ${selected ? threadTitle(selected) : "No session selected"} `);
     transcript.setContent(selected ? formatTranscript(selected) : "Select a session to inspect it.");
     composer.setLabel(` ${attachedId ? "Reply — Enter to send" : "Reply — attach a session first"} `);
-    footer.setContent(`${statusMessage}  |  ${attachedId ? `attached ${shortId(attachedId)}` : "detached"}  |  approvals ${approvals.size}  |  Click/Enter attach  Tab switch  Esc detach  Ctrl-C quit`);
+    footer.setContent(`${statusMessage}  |  ${attachedId ? `attached ${shortId(attachedId)}` : "detached"}  |  approvals ${approvals.size}  |  m compact  g ${groupByProject ? "global view" : "project view"}  |  Enter attach  Esc detach  Ctrl-C quit`);
     screen.render();
   };
 
@@ -215,6 +216,28 @@ export async function runTui({ api, client, options, approvals }) {
     }
   };
 
+  const compactSelected = async () => {
+    if (screen.focused === composer) return;
+    const targetId = highlightedId ?? selectedId;
+    if (!targetId) {
+      statusMessage = "Select a session before compacting.";
+      render();
+      return;
+    }
+    try {
+      if (attachedId !== targetId) {
+        await api.resume(targetId);
+        attachedId = targetId;
+      }
+      await api.compact(targetId);
+      statusMessage = `Compaction started for ${shortId(targetId)}.`;
+      await refresh(true);
+    } catch (error) {
+      statusMessage = `Compaction failed: ${error.message}`;
+      render();
+    }
+  };
+
   const onNotification = (notification) => {
     const threadId = notification.params?.threadId;
     if (threadId) cache.delete(threadId);
@@ -296,6 +319,13 @@ export async function runTui({ api, client, options, approvals }) {
   screen.key("a", () => respondToApproval("accept"));
   screen.key("d", () => respondToApproval("decline"));
   screen.key("c", () => respondToApproval("cancel"));
+  screen.key("m", () => compactSelected());
+  screen.key("g", () => {
+    if (screen.focused === composer) return;
+    groupByProject = !groupByProject;
+    statusMessage = groupByProject ? "Grouped by project." : "Showing global active/inactive groups.";
+    render();
+  });
   screen.key("escape", () => {
     if (attachedId) detach();
     else sessionList.focus();
@@ -314,19 +344,38 @@ function sessionLabel(thread, attachedId) {
   return `${marker} ${shortId(thread.id)} ${threadTitle(thread)} · ${statusLabel(thread)} · ${age}`;
 }
 
-export function buildSessionEntries(threads, attachedId = null) {
-  const active = threads.filter(isActiveSession);
-  const inactive = threads.filter((thread) => !isActiveSession(thread));
+export function buildSessionEntries(threads, attachedId = null, { groupByProject = true } = {}) {
   const entries = [];
-  if (active.length) {
-    entries.push({ label: `── ACTIVE (${active.length}) ──` });
-    entries.push(...active.map((thread) => ({ thread, label: sessionLabel(thread, attachedId) })));
-  }
-  if (inactive.length) {
-    entries.push({ label: `── INACTIVE (${inactive.length}) ──` });
-    entries.push(...inactive.map((thread) => ({ thread, label: sessionLabel(thread, attachedId) })));
+  const projects = groupByProject ? groupThreadsByProject(threads) : [["All projects", threads]];
+  for (const [project, projectThreads] of projects) {
+    if (groupByProject) entries.push({ label: `── ${project} ──` });
+    const active = projectThreads.filter(isActiveSession);
+    const inactive = projectThreads.filter((thread) => !isActiveSession(thread));
+    if (active.length) {
+      entries.push({ label: `${groupByProject ? "  " : "── "}ACTIVE (${active.length})${groupByProject ? "" : " ──"}` });
+      entries.push(...active.map((thread) => ({ thread, label: sessionLabel(thread, attachedId) })));
+    }
+    if (inactive.length) {
+      entries.push({ label: `${groupByProject ? "  " : "── "}INACTIVE (${inactive.length})${groupByProject ? "" : " ──"}` });
+      entries.push(...inactive.map((thread) => ({ thread, label: sessionLabel(thread, attachedId) })));
+    }
   }
   return entries;
+}
+
+export function projectName(thread) {
+  const cwd = String(thread?.cwd ?? "").replace(/[\\/]+$/, "");
+  return cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Unknown project";
+}
+
+function groupThreadsByProject(threads) {
+  const groups = new Map();
+  for (const thread of threads) {
+    const name = projectName(thread);
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(thread);
+  }
+  return [...groups.entries()];
 }
 
 export function isActiveSession(thread) {

@@ -44,6 +44,7 @@ codexctl attach THREAD_ID        resume and inspect a thread
 codexctl resume THREAD_ID        resume a thread
 codexctl fork THREAD_ID          fork a thread
 codexctl interrupt THREAD_ID [TURN_ID]
+codexctl compact THREAD_ID
 codexctl rename THREAD_ID NAME
 codexctl archive THREAD_ID
 codexctl purge --dry-run
@@ -65,12 +66,16 @@ command, or override the interval with `--refresh-ms N` or the
 When run from a real terminal, the dashboard opens as a two-pane cockpit. Use
 the mouse or arrow keys to select a session. Sessions are grouped into
 `ACTIVE` and `INACTIVE` sections; PageUp/PageDown moves through the grouped
-list without losing your place during refreshes. Press Enter to attach, type a
-reply in the composer, and press Escape to detach. Detaching unsubscribes the
+list without losing your place during refreshes. They are grouped by the
+working-directory project name by default (`Occam` for the Occam checkout).
+Press Enter to attach the highlighted session, type a reply in the composer,
+and press Escape to detach. Detaching unsubscribes the
 dashboard from that thread without interrupting its Codex turn, so you can
 move on while it continues in the background. Press Tab to switch between the
-session list and reply box, and Ctrl-C to quit. Piped/non-TTY invocations keep
-the plain readline dashboard for scripting and smoke tests.
+session list and reply box. Press `m` to start manual compaction for the
+highlighted session, and `g` to toggle between project-grouped and global
+active/inactive views. Piped/non-TTY invocations keep the plain readline
+dashboard for scripting and smoke tests.
 
 When an approval arrives, focus the session list and press `a` to accept, `d`
 to decline, or `c` to cancel. These shortcuts are disabled while typing in the
