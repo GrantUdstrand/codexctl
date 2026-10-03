@@ -95,6 +95,7 @@ export async function runTui({ api, client, options, approvals }) {
   let highlightedId = null;
   let cursorIndex = 0;
   let attachedId = null;
+  let observedId = null;
   let refreshing = false;
   let closed = false;
   let groupByProject = true;
@@ -108,7 +109,7 @@ export async function runTui({ api, client, options, approvals }) {
     const currentEntry = listEntries[sessionList.selected];
     cursorIndex = sessionList.selected;
     highlightedId = currentEntry?.thread?.id ?? null;
-    listEntries = buildSessionEntries(threads, attachedId, { groupByProject });
+    listEntries = buildSessionEntries(threads, attachedId, { groupByProject, observedId });
     const selected = threads.find((thread) => thread.id === (highlightedId ?? selectedId)) ?? null;
     sessionList.setItems(listEntries.map((entry) => entry.label));
     for (const item of sessionList.items) {
@@ -124,8 +125,13 @@ export async function runTui({ api, client, options, approvals }) {
     if (selectedIndex >= 0) sessionList.select(selectedIndex);
     transcript.setLabel(` ${selected ? threadTitle(selected) : "No session selected"} `);
     transcript.setContent(selected ? formatTranscript(selected) : "Select a session to inspect it.");
-    composer.setLabel(` ${attachedId ? "Reply — Enter to send" : "Reply — attach a session first"} `);
-    footer.setContent(`${statusMessage}  |  ${attachedId ? `attached ${shortId(attachedId)}` : "detached"}  |  approvals ${approvals.size}  |  m compact  g ${groupByProject ? "global view" : "project view"}  |  Enter attach  Esc detach  Ctrl-C quit`);
+    composer.setLabel(` ${attachedId ? "Reply — Enter to send" : observedId ? "Read-only observer — press Esc to leave" : "Reply — attach a session first"} `);
+    const mode = attachedId
+      ? `attached ${shortId(attachedId)}`
+      : observedId
+        ? `observing ${shortId(observedId)}`
+        : "detached";
+    footer.setContent(`${statusMessage}  |  ${mode}  |  approvals ${approvals.size}  |  m compact  o observe  g ${groupByProject ? "global view" : "project view"}  |  Enter attach  Esc leave  Ctrl-C quit`);
     screen.render();
   };
 
@@ -164,7 +170,9 @@ export async function runTui({ api, client, options, approvals }) {
 
   const detach = async () => {
     const id = attachedId;
+    const observed = observedId;
     attachedId = null;
+    observedId = null;
     composer.clearValue();
     sessionList.focus();
     if (id) {
@@ -174,6 +182,8 @@ export async function runTui({ api, client, options, approvals }) {
       } catch (error) {
         statusMessage = `Detached locally; unsubscribe failed: ${error.message}`;
       }
+    } else if (observed) {
+      statusMessage = `Stopped observing ${shortId(observed)}.`;
     }
     render();
   };
@@ -182,6 +192,7 @@ export async function runTui({ api, client, options, approvals }) {
     if (!thread) return;
     selectedId = thread.id;
     highlightedId = thread.id;
+    observedId = null;
     if (attachedId === thread.id) {
       composer.focus();
       render();
@@ -198,6 +209,19 @@ export async function runTui({ api, client, options, approvals }) {
       statusMessage = `Attach failed: ${error.message}`;
       render();
     }
+  };
+
+  const observe = async (thread) => {
+    if (!thread) return;
+    selectedId = thread.id;
+    highlightedId = thread.id;
+    if (attachedId) await detach();
+    attachedId = null;
+    observedId = thread.id;
+    composer.clearValue();
+    sessionList.focus();
+    statusMessage = `Observing ${shortId(thread.id)} read-only; the other writer is undisturbed.`;
+    await refresh(true);
   };
 
   const requestAttach = (thread) => {
@@ -246,6 +270,11 @@ export async function runTui({ api, client, options, approvals }) {
       return;
     }
     try {
+      if (observedId === targetId) {
+        statusMessage = "Observer mode is read-only; attach before compacting.";
+        render();
+        return;
+      }
       if (attachedId !== targetId) {
         await api.resume(targetId);
         attachedId = targetId;
@@ -330,7 +359,7 @@ export async function runTui({ api, client, options, approvals }) {
     };
   });
   screen.key("tab", () => {
-    if (screen.focused === composer) sessionList.focus();
+    if (screen.focused === composer || !attachedId) sessionList.focus();
     else composer.focus();
     screen.render();
   });
@@ -338,6 +367,15 @@ export async function runTui({ api, client, options, approvals }) {
   screen.key("d", () => respondToApproval("decline"));
   screen.key("c", () => respondToApproval("cancel"));
   screen.key("m", () => compactSelected());
+  screen.key("o", () => {
+    if (screen.focused === composer) return;
+    const targetId = highlightedId ?? selectedId;
+    const thread = threads.find((item) => item.id === targetId);
+    observe(thread).catch((error) => {
+      statusMessage = `Observe failed: ${error.message}`;
+      render();
+    });
+  });
   screen.key("g", () => {
     if (screen.focused === composer) return;
     groupByProject = !groupByProject;
@@ -345,7 +383,7 @@ export async function runTui({ api, client, options, approvals }) {
     render();
   });
   screen.key("escape", () => {
-    if (attachedId) detach();
+    if (attachedId || observedId) detach();
     else sessionList.focus();
   });
   screen.key(["C-c", "C-q"], () => close());
@@ -356,13 +394,19 @@ export async function runTui({ api, client, options, approvals }) {
   return done;
 }
 
-function sessionLabel(thread, attachedId) {
-  const marker = attachedId === thread.id ? "▶" : thread.isArchived ? "·" : thread.status?.type === "active" ? "●" : "○";
+function sessionLabel(thread, attachedId, observedId) {
+  const marker = attachedId === thread.id
+    ? "▶"
+    : observedId === thread.id
+      ? "◉"
+      : thread.isArchived
+        ? "·"
+        : thread.status?.type === "active" ? "●" : "○";
   const age = formatTimestamp(thread.updatedAt);
   return `${marker} ${shortId(thread.id)} ${threadTitle(thread)} · ${statusLabel(thread)} · ${age}`;
 }
 
-export function buildSessionEntries(threads, attachedId = null, { groupByProject = true } = {}) {
+export function buildSessionEntries(threads, attachedId = null, { groupByProject = true, observedId = null } = {}) {
   const entries = [];
   const projects = groupByProject ? groupThreadsByProject(threads) : [["All projects", threads]];
   for (const [project, projectThreads] of projects) {
@@ -371,11 +415,11 @@ export function buildSessionEntries(threads, attachedId = null, { groupByProject
     const inactive = projectThreads.filter((thread) => !isActiveSession(thread));
     if (active.length) {
       entries.push({ label: `${groupByProject ? "  " : "── "}ACTIVE (${active.length})${groupByProject ? "" : " ──"}` });
-      entries.push(...active.map((thread) => ({ thread, label: sessionLabel(thread, attachedId) })));
+      entries.push(...active.map((thread) => ({ thread, label: sessionLabel(thread, attachedId, observedId) })));
     }
     if (inactive.length) {
       entries.push({ label: `${groupByProject ? "  " : "── "}INACTIVE (${inactive.length})${groupByProject ? "" : " ──"}` });
-      entries.push(...inactive.map((thread) => ({ thread, label: sessionLabel(thread, attachedId) })));
+      entries.push(...inactive.map((thread) => ({ thread, label: sessionLabel(thread, attachedId, observedId) })));
     }
   }
   return entries;

@@ -49,6 +49,7 @@ Usage:
   codexctl ui                      Open the mouse-enabled session cockpit
   codexctl list [--json]           List active and archived threads
   codexctl attach <thread-id>      Resume and inspect a thread
+  codexctl observe <thread-id>     Read-only live view; never becomes the writer
   codexctl resume <thread-id>      Resume a thread
   codexctl fork <thread-id>        Fork a thread
   codexctl interrupt <thread-id> [turn-id]
@@ -63,7 +64,7 @@ Usage:
   codexctl purge --delete --confirm
 
 Dashboard commands:
-  refresh, attach ID, resume ID, fork ID, interrupt ID [TURN], compact ID
+  refresh, attach ID, observe ID, resume ID, fork ID, interrupt ID [TURN], compact ID
   rename ID NAME, archive ID, clear ID, approvals, approve REQUEST accept|decline|cancel
   help, quit
 
@@ -143,6 +144,9 @@ async function runCommand(options, { api, client, stdout, approvals, input = pro
       stdout.write(`${formatThread(result.thread ?? result)}\n`);
       return;
     }
+    case "observe":
+      await observeThread(options, { api, stdout, input });
+      return;
     case "resume": {
       const result = await api.resume(threadId);
       stdout.write(`Resumed ${threadId}\n${formatThread(result.thread ?? result)}\n`);
@@ -299,6 +303,43 @@ export async function clearSession(options, { api, stdout, input }) {
   stdout.write(`Deleted ${threadId} and its stored history.\n`);
 }
 
+export async function observeThread(options, { api, stdout, input }) {
+  const requestedId = options.positional[0];
+  const threads = await api.listThreads({
+    cwd: options.cwd,
+    includeArchived: options.includeArchived,
+  });
+  const threadId = resolveThreadId(requestedId, threads);
+  const render = async () => {
+    const thread = await api.readThread(threadId);
+    const turn = activeTurnId(thread);
+    stdout.write(`${formatThread(thread)}\nturn: ${turn ? `in progress (${turn})` : "idle"}\n`);
+  };
+
+  if (!input.isTTY || !stdout.isTTY) {
+    await render();
+    return;
+  }
+
+  let stopped = false;
+  const stop = () => { stopped = true; };
+  process.once("SIGINT", stop);
+  try {
+    while (!stopped) {
+      stdout.write("\x1b[2J\x1b[H");
+      try {
+        await render();
+      } catch (error) {
+        stdout.write(`observe error: ${error.message}\n`);
+      }
+      if (!stopped) await new Promise((resolve) => setTimeout(resolve, Math.max(250, options.refreshMs || 1000)));
+    }
+  } finally {
+    process.off("SIGINT", stop);
+    stdout.write("\nStopped observing.\n");
+  }
+}
+
 export function isNotLoadedThread(thread) {
   return thread?.status?.type === "notLoaded";
 }
@@ -416,7 +457,7 @@ async function runDashboard({ api, client, options, stdout, stderr, approvals, i
           for (const [id, request] of approvals) stdout.write(`${id}: ${request.params?.command ?? request.params?.reason ?? request.method}\n`);
         } else {
           const parsed = parseArgs(command.split(/\s+/));
-          if (["attach", "resume", "fork", "interrupt", "compact", "rename", "archive", "clear"].includes(parsed.command)) {
+          if (["attach", "observe", "resume", "fork", "interrupt", "compact", "rename", "archive", "clear"].includes(parsed.command)) {
             parsed.positional[0] = resolveThreadId(parsed.positional[0], threads);
           }
           if (parsed.command === "attach") attachedThreadId = parsed.positional[0];

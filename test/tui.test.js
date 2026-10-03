@@ -49,6 +49,10 @@ test("groups active sessions before inactive sessions", () => {
     cwd: "/Users/grant/StudioProjects/Occam-7",
     gitInfo: { originUrl: "https://github.com/GrantUdstrand/Occam.git" },
   }), "Occam");
+  const observedEntries = buildSessionEntries([
+    { id: "active", cwd: "/Users/grant/StudioProjects/Occam", status: { type: "active" } },
+  ], null, { observedId: "active" });
+  assert.match(observedEntries.find((entry) => entry.thread)?.label ?? "", /^◉ /);
   assert.equal(projectName({ cwd: "/Users/grant/StudioProjects/Occam/" }), "Occam");
   assert.equal(projectName({}), "Unknown project");
 });

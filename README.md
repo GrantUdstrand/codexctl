@@ -41,6 +41,7 @@ codexctl watch                   live session cockpit
 codexctl list                    active and archived threads
 codexctl list --json             machine-readable thread summaries
 codexctl attach THREAD_ID        resume and inspect a thread
+codexctl observe THREAD_ID       read-only live view; does not become the writer
 codexctl resume THREAD_ID        resume a thread
 codexctl fork THREAD_ID          fork a thread
 codexctl interrupt THREAD_ID [TURN_ID]
@@ -76,8 +77,10 @@ composer, and press Escape to detach. Detaching unsubscribes the
 dashboard from that thread without interrupting its Codex turn, so you can
 move on while it continues in the background. Press Tab to switch between the
 session list and reply box. Press `m` to start manual compaction for the
-highlighted session, and `g` to toggle between project-grouped and global
-active/inactive views. Piped/non-TTY invocations keep the plain readline
+highlighted session. Press `o` to observe the highlighted session read-only;
+observer mode polls `thread/read` and never resumes or writes to the session.
+Press `g` to toggle between project-grouped and global active/inactive views.
+Piped/non-TTY invocations keep the plain readline
 dashboard for scripting and smoke tests.
 
 When an approval arrives, focus the session list and press `a` to accept, `d`
@@ -85,8 +88,17 @@ to decline, or `c` to cancel. These shortcuts are disabled while typing in the
 reply box.
 
 Inside the dashboard, use `refresh`, `attach ID`, `resume ID`, `fork ID`,
-`interrupt ID [TURN]`, `rename ID NAME`, `archive ID`, `approvals`, or
+`observe ID`, `interrupt ID [TURN]`, `rename ID NAME`, `archive ID`, `approvals`, or
 `approve REQUEST_ID accept|decline|cancel`. Press `quit` or `Ctrl-D` to exit.
+
+For a separate live read-only terminal view, use:
+
+```sh
+codexctl observe THREAD_ID
+```
+
+This polls the saved thread state and does not call `thread/resume`, so another
+Codex client can remain the writer. Press Ctrl-C to leave observer mode.
 
 To clear one session from the command line, `clear` first shows a dry-run
 preview and makes no changes. Use `--archive --confirm` to remove it from the

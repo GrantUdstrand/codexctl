@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Readable } from "node:stream";
-import { clearSession, isActiveThread, isNotLoadedThread, parseAge, parseArgs, purgeNotLoaded, resolveThreadId, selectPurgeThreads } from "../src/cli.js";
+import { clearSession, isActiveThread, isNotLoadedThread, observeThread, parseAge, parseArgs, purgeNotLoaded, resolveThreadId, selectPurgeThreads } from "../src/cli.js";
 
 test("parses dashboard options and positional arguments", () => {
   const options = parseArgs(["watch", "--json", "--cwd", "/tmp/project", "--refresh-ms", "250"]);
@@ -70,6 +70,34 @@ test("clear permanently deletes only after DELETE confirmation", async () => {
     { api, stdout: { write() {} }, input: Readable.from(["DELETE\n"]) },
   );
   assert.deepEqual(calls, ["abcdef01-full"]);
+});
+
+test("observe reads a session without resuming it", async () => {
+  const calls = [];
+  let output = "";
+  const api = {
+    async listThreads() {
+      return [{ id: "abcdef01-full", updatedAt: 20, status: { type: "active" }, preview: "Watching progress" }];
+    },
+    async readThread(id) {
+      calls.push(id);
+      return {
+        id,
+        status: { type: "active" },
+        updatedAt: 20,
+        cwd: "/tmp/project",
+        preview: "Watching progress",
+        turns: [{ id: "turn-1", status: "inProgress", items: [] }],
+      };
+    },
+  };
+  await observeThread(
+    { cwd: null, includeArchived: true, refreshMs: 1000, positional: ["abcdef"] },
+    { api, stdout: { write(value) { output += value; } }, input: Readable.from([]) },
+  );
+  assert.deepEqual(calls, ["abcdef01-full"]);
+  assert.match(output, /turn: in progress \(turn-1\)/);
+  assert.match(output, /Watching progress/);
 });
 
 test("resolves unique displayed thread prefixes", () => {
