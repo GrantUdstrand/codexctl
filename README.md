@@ -81,7 +81,9 @@ observer mode). Scroll the transcript with PageUp/PageDown or the arrow keys.
 Press `m` to start manual compaction for the
 highlighted session. Press `o` to observe the highlighted session read-only;
 observer mode polls `thread/read` and never resumes or writes to the session.
-Press `g` to toggle between project-grouped and global active/inactive views.
+Press `t` to toggle transcript tailing: while enabled, the right pane stays
+pinned to the newest activity. Press `g` to toggle between project-grouped and
+global active/inactive views.
 Piped/non-TTY invocations keep the plain readline
 dashboard for scripting and smoke tests.
 

@@ -100,6 +100,7 @@ export async function runTui({ api, client, options, approvals }) {
   let closed = false;
   let groupByProject = true;
   let attachingId = null;
+  let tailing = false;
   let statusMessage = "Loading sessions…";
   const cache = new Map();
   let listEntries = [];
@@ -125,13 +126,14 @@ export async function runTui({ api, client, options, approvals }) {
     if (selectedIndex >= 0) sessionList.select(selectedIndex);
     transcript.setLabel(` ${selected ? threadTitle(selected) : "No session selected"} `);
     transcript.setContent(selected ? formatTranscript(selected) : "Select a session to inspect it.");
+    if (tailing) transcript.setScrollPerc(100);
     composer.setLabel(` ${attachedId ? "Reply — Enter to send" : observedId ? "Read-only observer — press Esc to leave" : "Reply — attach a session first"} `);
     const mode = attachedId
       ? `attached ${shortId(attachedId)}`
       : observedId
         ? `observing ${shortId(observedId)}`
         : "detached";
-    footer.setContent(`${statusMessage}  |  ${mode}  |  approvals ${approvals.size}  |  m compact  o observe  g ${groupByProject ? "global view" : "project view"}  |  Enter attach  Esc leave  Ctrl-C quit`);
+    footer.setContent(`${statusMessage}  |  ${mode}  |  approvals ${approvals.size}  |  m compact  o observe  t tail ${tailing ? "on" : "off"}  g ${groupByProject ? "global view" : "project view"}  |  Enter attach  Esc leave  Ctrl-C quit`);
     screen.render();
   };
 
@@ -376,6 +378,12 @@ export async function runTui({ api, client, options, approvals }) {
       statusMessage = `Observe failed: ${error.message}`;
       render();
     });
+  });
+  screen.key("t", () => {
+    if (screen.focused === composer) return;
+    tailing = !tailing;
+    statusMessage = tailing ? "Transcript tailing enabled." : "Transcript tailing paused.";
+    render();
   });
   screen.key("g", () => {
     if (screen.focused === composer) return;
