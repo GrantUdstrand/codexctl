@@ -55,6 +55,7 @@ Usage:
   codexctl compact <thread-id>
   codexctl rename <thread-id> <name>
   codexctl archive <thread-id>
+  codexctl clear <thread-id> [--archive|--delete] [--confirm]
   codexctl purge [--dry-run]
   codexctl purge --older-than 7d --dry-run
   codexctl purge --older-than 7d --delete --confirm
@@ -63,7 +64,7 @@ Usage:
 
 Dashboard commands:
   refresh, attach ID, resume ID, fork ID, interrupt ID [TURN], compact ID
-  rename ID NAME, archive ID, approvals, approve REQUEST accept|decline|cancel
+  rename ID NAME, archive ID, clear ID, approvals, approve REQUEST accept|decline|cancel
   help, quit
 
 Options:
@@ -77,6 +78,11 @@ Purge modes:
   purge --older-than 7d  Preview sessions older than seven days
   purge --archive       Archive notLoaded threads after confirmation
   purge --delete        Permanently delete notLoaded threads after confirmation
+
+Clear modes:
+  clear ID              Preview one session; make no changes
+  clear ID --archive    Archive one session, preserving its history
+  clear ID --delete     Permanently delete one session and its stored history
 `;
 }
 
@@ -170,6 +176,9 @@ async function runCommand(options, { api, client, stdout, approvals, input = pro
       await api.archive(threadId);
       stdout.write(`Archived ${threadId}\n`);
       return;
+    case "clear":
+      await clearSession(options, { api, stdout, input });
+      return;
     case "purge":
       await purgeNotLoaded(options, { api, stdout, input });
       return;
@@ -244,6 +253,50 @@ export async function purgeNotLoaded(options, { api, stdout, input }) {
     stdout.write(`Skipped ${failed.length} thread${failed.length === 1 ? "" : "s"} that could not be changed:\n`);
     for (const { thread, error } of failed) stdout.write(`  ${thread.id}: ${error.message}\n`);
   }
+}
+
+export async function clearSession(options, { api, stdout, input }) {
+  const requestedId = options.positional[0];
+  const threads = await api.listThreads({
+    cwd: options.cwd,
+    includeArchived: options.includeArchived,
+  });
+  const threadId = resolveThreadId(requestedId, threads);
+  const thread = threads.find((item) => item.id === threadId);
+
+  stdout.write(`Selected session:\n${formatThreads([thread])}\n`);
+  if (options.dryRun || !options.purgeAction) {
+    stdout.write("\nDry run only. Choose --archive or --delete to take action.\n");
+    return;
+  }
+  if (!options.confirm) {
+    throw new Error(`Refusing to ${options.purgeAction} ${threadId} without --confirm.`);
+  }
+
+  const verb = options.purgeAction === "delete" ? "DELETE" : "ARCHIVE";
+  const confirmed = await askForConfirmation(
+    input,
+    stdout,
+    `Type ${verb} to confirm ${options.purgeAction} of this thread: `,
+    verb,
+  );
+  if (!confirmed) {
+    stdout.write("No changes made.\n");
+    return;
+  }
+
+  if (options.purgeAction === "archive") {
+    if (thread.isArchived) {
+      stdout.write("Session is already archived; no changes made.\n");
+      return;
+    }
+    await api.archive(threadId);
+    stdout.write(`Archived ${threadId}; history preserved.\n`);
+    return;
+  }
+
+  await api.delete(threadId);
+  stdout.write(`Deleted ${threadId} and its stored history.\n`);
 }
 
 export function isNotLoadedThread(thread) {
@@ -363,7 +416,7 @@ async function runDashboard({ api, client, options, stdout, stderr, approvals, i
           for (const [id, request] of approvals) stdout.write(`${id}: ${request.params?.command ?? request.params?.reason ?? request.method}\n`);
         } else {
           const parsed = parseArgs(command.split(/\s+/));
-          if (["attach", "resume", "fork", "interrupt", "compact", "rename", "archive"].includes(parsed.command)) {
+          if (["attach", "resume", "fork", "interrupt", "compact", "rename", "archive", "clear"].includes(parsed.command)) {
             parsed.positional[0] = resolveThreadId(parsed.positional[0], threads);
           }
           if (parsed.command === "attach") attachedThreadId = parsed.positional[0];

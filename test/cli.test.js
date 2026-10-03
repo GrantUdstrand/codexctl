@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Readable } from "node:stream";
-import { isActiveThread, isNotLoadedThread, parseAge, parseArgs, purgeNotLoaded, resolveThreadId, selectPurgeThreads } from "../src/cli.js";
+import { clearSession, isActiveThread, isNotLoadedThread, parseAge, parseArgs, purgeNotLoaded, resolveThreadId, selectPurgeThreads } from "../src/cli.js";
 
 test("parses dashboard options and positional arguments", () => {
   const options = parseArgs(["watch", "--json", "--cwd", "/tmp/project", "--refresh-ms", "250"]);
@@ -37,6 +37,39 @@ test("parses safe purge modes", () => {
   assert.equal(parseAge("7d"), 7 * 86_400);
   assert.equal(parseAge("1w"), 7 * 86_400);
   assert.throws(() => parseAge("last-week"), /Invalid --older-than/);
+});
+
+test("clear previews a single session and requires an explicit action", async () => {
+  const calls = [];
+  let output = "";
+  const api = {
+    async listThreads() {
+      return [{ id: "abcdef01-full", updatedAt: 20, status: { type: "idle" }, preview: "Keep or clear me" }];
+    },
+    async delete(id) { calls.push(["delete", id]); },
+  };
+  await clearSession(
+    { cwd: null, includeArchived: true, dryRun: false, purgeAction: null, positional: ["abcdef"] },
+    { api, stdout: { write(value) { output += value; } }, input: Readable.from([]) },
+  );
+  assert.match(output, /Selected session/);
+  assert.match(output, /Dry run only/);
+  assert.deepEqual(calls, []);
+});
+
+test("clear permanently deletes only after DELETE confirmation", async () => {
+  const calls = [];
+  const api = {
+    async listThreads() {
+      return [{ id: "abcdef01-full", updatedAt: 20, status: { type: "idle" }, preview: "Delete me" }];
+    },
+    async delete(id) { calls.push(id); },
+  };
+  await clearSession(
+    { cwd: null, includeArchived: true, dryRun: false, purgeAction: "delete", confirm: true, positional: ["abcdef"] },
+    { api, stdout: { write() {} }, input: Readable.from(["DELETE\n"]) },
+  );
+  assert.deepEqual(calls, ["abcdef01-full"]);
 });
 
 test("resolves unique displayed thread prefixes", () => {

@@ -1,6 +1,6 @@
 # codexctl
 
-`codexctl` is a small, dependency-free terminal dashboard for managing local
+`codexctl` is a small terminal dashboard for managing local
 Codex App Server threads. It is intentionally an MVP: it uses the installed
 `codex` executable as the App Server host and keeps the UI in the terminal.
 
@@ -47,6 +47,9 @@ codexctl interrupt THREAD_ID [TURN_ID]
 codexctl compact THREAD_ID
 codexctl rename THREAD_ID NAME
 codexctl archive THREAD_ID
+codexctl clear THREAD_ID
+codexctl clear THREAD_ID --archive --confirm
+codexctl clear THREAD_ID --delete --confirm
 codexctl purge --dry-run
 codexctl purge --older-than 7d --dry-run
 codexctl purge --older-than 7d --delete --confirm
@@ -67,9 +70,9 @@ When run from a real terminal, the dashboard opens as a two-pane cockpit. Use
 the mouse or arrow keys to select a session. Sessions are grouped into
 `ACTIVE` and `INACTIVE` sections; PageUp/PageDown moves through the grouped
 list without losing your place during refreshes. They are grouped by the
-working-directory project name by default (`Occam` for the Occam checkout).
-Press Enter to attach the highlighted session, type a reply in the composer,
-and press Escape to detach. Detaching unsubscribes the
+repository origin by default, so all Occam worktrees appear under `Occam`.
+A single click or Enter attaches the highlighted session; type a reply in the
+composer, and press Escape to detach. Detaching unsubscribes the
 dashboard from that thread without interrupting its Codex turn, so you can
 move on while it continues in the background. Press Tab to switch between the
 session list and reply box. Press `m` to start manual compaction for the
@@ -84,6 +87,17 @@ reply box.
 Inside the dashboard, use `refresh`, `attach ID`, `resume ID`, `fork ID`,
 `interrupt ID [TURN]`, `rename ID NAME`, `archive ID`, `approvals`, or
 `approve REQUEST_ID accept|decline|cancel`. Press `quit` or `Ctrl-D` to exit.
+
+To clear one session from the command line, `clear` first shows a dry-run
+preview and makes no changes. Use `--archive --confirm` to remove it from the
+active list while preserving history, or `--delete --confirm` and type `DELETE`
+to permanently remove its stored history:
+
+```sh
+codexctl clear THREAD_ID
+codexctl clear THREAD_ID --archive --confirm
+codexctl clear THREAD_ID --delete --confirm
+```
 
 Approval requests are connection-scoped App Server callbacks. They appear in
 the dashboard while the associated Codex turn is running; an approval request

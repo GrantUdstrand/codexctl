@@ -23,8 +23,18 @@ test("handles threads without stored turns", () => {
 
 test("groups active sessions before inactive sessions", () => {
   const entries = buildSessionEntries([
-    { id: "idle", cwd: "/Users/grant/StudioProjects/Occam", status: { type: "idle" } },
-    { id: "active", cwd: "/Users/grant/StudioProjects/Occam", status: { type: "active" } },
+    {
+      id: "idle",
+      cwd: "/Users/grant/StudioProjects/Occam-2",
+      gitInfo: { originUrl: "git@github.com:GrantUdstrand/Occam.git" },
+      status: { type: "idle" },
+    },
+    {
+      id: "active",
+      cwd: "/Users/grant/StudioProjects/Occam",
+      gitInfo: { originUrl: "git@github.com:GrantUdstrand/Occam.git" },
+      status: { type: "active" },
+    },
   ], "active");
   assert.deepEqual(entries.map((entry) => entry.thread?.id ?? entry.label), [
     "── Occam ──",
@@ -35,6 +45,10 @@ test("groups active sessions before inactive sessions", () => {
   ]);
   assert.equal(isActiveSession({ status: { type: "active" } }), true);
   assert.equal(isActiveSession({ status: { type: "idle" } }), false);
+  assert.equal(projectName({
+    cwd: "/Users/grant/StudioProjects/Occam-7",
+    gitInfo: { originUrl: "https://github.com/GrantUdstrand/Occam.git" },
+  }), "Occam");
   assert.equal(projectName({ cwd: "/Users/grant/StudioProjects/Occam/" }), "Occam");
   assert.equal(projectName({}), "Unknown project");
 });

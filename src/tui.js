@@ -98,6 +98,7 @@ export async function runTui({ api, client, options, approvals }) {
   let refreshing = false;
   let closed = false;
   let groupByProject = true;
+  let attachingId = null;
   let statusMessage = "Loading sessions…";
   const cache = new Map();
   let listEntries = [];
@@ -110,6 +111,13 @@ export async function runTui({ api, client, options, approvals }) {
     listEntries = buildSessionEntries(threads, attachedId, { groupByProject });
     const selected = threads.find((thread) => thread.id === (highlightedId ?? selectedId)) ?? null;
     sessionList.setItems(listEntries.map((entry) => entry.label));
+    for (const item of sessionList.items) {
+      if (item.codexctlAttachHandler) continue;
+      item.codexctlAttachHandler = true;
+      item.on("click", () => {
+        setTimeout(() => requestAttach(listEntries[sessionList.items.indexOf(item)]?.thread), 0);
+      });
+    }
     const selectedIndex = highlightedId
       ? listEntries.findIndex((entry) => entry.thread?.id === highlightedId)
       : Math.min(cursorIndex, Math.max(0, listEntries.length - 1));
@@ -192,6 +200,19 @@ export async function runTui({ api, client, options, approvals }) {
     }
   };
 
+  const requestAttach = (thread) => {
+    if (!thread || attachingId === thread.id) return;
+    attachingId = thread.id;
+    attach(thread)
+      .catch((error) => {
+        statusMessage = `Attach failed: ${error.message}`;
+        render();
+      })
+      .finally(() => {
+        if (attachingId === thread.id) attachingId = null;
+      });
+  };
+
   const send = async (value) => {
     const text = String(value ?? "").trim();
     if (!text) return;
@@ -272,10 +293,7 @@ export async function runTui({ api, client, options, approvals }) {
   sessionList.on("select", (_item, index) => {
     const entry = listEntries[index];
     if (!entry?.thread) return;
-    attach(entry.thread).catch((error) => {
-      statusMessage = `Attach failed: ${error.message}`;
-      render();
-    });
+    requestAttach(entry.thread);
   });
   sessionList.on("keypress", (_ch, key) => {
     if (["up", "down", "pageup", "pagedown", "home", "end"].includes(key.name)) {
@@ -364,6 +382,19 @@ export function buildSessionEntries(threads, attachedId = null, { groupByProject
 }
 
 export function projectName(thread) {
+  const origin = thread?.gitInfo?.originUrl
+    ?? thread?.gitInfo?.repositoryUrl
+    ?? thread?.gitInfo?.repoUrl;
+  if (origin) {
+    const repository = String(origin)
+      .replace(/[?#].*$/, "")
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .at(-1)
+      ?.replace(/\.git$/i, "");
+    if (repository) return repository;
+  }
   const cwd = String(thread?.cwd ?? "").replace(/[\\/]+$/, "");
   return cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Unknown project";
 }
