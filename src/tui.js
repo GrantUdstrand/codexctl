@@ -359,8 +359,9 @@ export async function runTui({ api, client, options, approvals }) {
     };
   });
   screen.key("tab", () => {
-    if (screen.focused === composer || !attachedId) sessionList.focus();
-    else composer.focus();
+    if (screen.focused === sessionList) transcript.focus();
+    else if (screen.focused === transcript && attachedId) composer.focus();
+    else sessionList.focus();
     screen.render();
   });
   screen.key("a", () => respondToApproval("accept"));

@@ -75,8 +75,10 @@ repository origin by default, so all Occam worktrees appear under `Occam`.
 A single click or Enter attaches the highlighted session; type a reply in the
 composer, and press Escape to detach. Detaching unsubscribes the
 dashboard from that thread without interrupting its Codex turn, so you can
-move on while it continues in the background. Press Tab to switch between the
-session list and reply box. Press `m` to start manual compaction for the
+move on while it continues in the background. Press Tab to cycle through the
+session list, transcript pane, and reply box (the reply box is skipped in
+observer mode). Scroll the transcript with PageUp/PageDown or the arrow keys.
+Press `m` to start manual compaction for the
 highlighted session. Press `o` to observe the highlighted session read-only;
 observer mode polls `thread/read` and never resumes or writes to the session.
 Press `g` to toggle between project-grouped and global active/inactive views.
