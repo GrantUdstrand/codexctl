@@ -63,7 +63,9 @@ command, or override the interval with `--refresh-ms N` or the
 `CODEXCTL_REFRESH_MS` environment variable.
 
 When run from a real terminal, the dashboard opens as a two-pane cockpit. Use
-the mouse or arrow keys to select a session, press Enter to attach, type a
+the mouse or arrow keys to select a session. Sessions are grouped into
+`ACTIVE` and `INACTIVE` sections; PageUp/PageDown moves through the grouped
+list without losing your place during refreshes. Press Enter to attach, type a
 reply in the composer, and press Escape to detach. Detaching unsubscribes the
 dashboard from that thread without interrupting its Codex turn, so you can
 move on while it continues in the background. Press Tab to switch between the

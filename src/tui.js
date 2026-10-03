@@ -92,17 +92,26 @@ export async function runTui({ api, client, options, approvals }) {
 
   let threads = [];
   let selectedId = null;
+  let highlightedId = null;
+  let cursorIndex = 0;
   let attachedId = null;
   let refreshing = false;
   let closed = false;
   let statusMessage = "Loading sessions…";
   const cache = new Map();
+  let listEntries = [];
 
   const render = () => {
     if (closed) return;
-    const selected = threads.find((thread) => thread.id === selectedId) ?? null;
-    sessionList.setItems(threads.map((thread) => sessionLabel(thread, attachedId)));
-    const selectedIndex = threads.findIndex((thread) => thread.id === selectedId);
+    const currentEntry = listEntries[sessionList.selected];
+    cursorIndex = sessionList.selected;
+    highlightedId = currentEntry?.thread?.id ?? null;
+    listEntries = buildSessionEntries(threads, attachedId);
+    const selected = threads.find((thread) => thread.id === (highlightedId ?? selectedId)) ?? null;
+    sessionList.setItems(listEntries.map((entry) => entry.label));
+    const selectedIndex = highlightedId
+      ? listEntries.findIndex((entry) => entry.thread?.id === highlightedId)
+      : Math.min(cursorIndex, Math.max(0, listEntries.length - 1));
     if (selectedIndex >= 0) sessionList.select(selectedIndex);
     transcript.setLabel(` ${selected ? threadTitle(selected) : "No session selected"} `);
     transcript.setContent(selected ? formatTranscript(selected) : "Select a session to inspect it.");
@@ -133,6 +142,8 @@ export async function runTui({ api, client, options, approvals }) {
       const ids = new Set(next.map((thread) => thread.id));
       for (const id of cache.keys()) if (!ids.has(id)) cache.delete(id);
       if (!selectedId || !ids.has(selectedId)) selectedId = next[0]?.id ?? null;
+      if (highlightedId && !ids.has(highlightedId)) highlightedId = null;
+      if (!listEntries.length && !highlightedId) highlightedId = selectedId;
       statusMessage = `${next.length} session${next.length === 1 ? "" : "s"} · refreshed ${new Date().toLocaleTimeString()}`;
     } catch (error) {
       statusMessage = `Refresh error: ${error.message}`;
@@ -161,6 +172,7 @@ export async function runTui({ api, client, options, approvals }) {
   const attach = async (thread) => {
     if (!thread) return;
     selectedId = thread.id;
+    highlightedId = thread.id;
     if (attachedId === thread.id) {
       composer.focus();
       render();
@@ -235,10 +247,19 @@ export async function runTui({ api, client, options, approvals }) {
   client.on("notification", onNotification);
   client.on("serverRequest", onServerRequest);
   sessionList.on("select", (_item, index) => {
-    attach(threads[index]).catch((error) => {
+    const entry = listEntries[index];
+    if (!entry?.thread) return;
+    attach(entry.thread).catch((error) => {
       statusMessage = `Attach failed: ${error.message}`;
       render();
     });
+  });
+  sessionList.on("keypress", (_ch, key) => {
+    if (["up", "down", "pageup", "pagedown", "home", "end"].includes(key.name)) {
+      if (key.name === "pageup") sessionList.move(-(Math.max(1, sessionList.height - 4)));
+      if (key.name === "pagedown") sessionList.move(Math.max(1, sessionList.height - 4));
+      setTimeout(() => render(), 0);
+    }
   });
   composer.on("submit", (value) => {
     send(value).catch((error) => {
@@ -291,4 +312,24 @@ function sessionLabel(thread, attachedId) {
   const marker = attachedId === thread.id ? "▶" : thread.isArchived ? "·" : thread.status?.type === "active" ? "●" : "○";
   const age = formatTimestamp(thread.updatedAt);
   return `${marker} ${shortId(thread.id)} ${threadTitle(thread)} · ${statusLabel(thread)} · ${age}`;
+}
+
+export function buildSessionEntries(threads, attachedId = null) {
+  const active = threads.filter(isActiveSession);
+  const inactive = threads.filter((thread) => !isActiveSession(thread));
+  const entries = [];
+  if (active.length) {
+    entries.push({ label: `── ACTIVE (${active.length}) ──` });
+    entries.push(...active.map((thread) => ({ thread, label: sessionLabel(thread, attachedId) })));
+  }
+  if (inactive.length) {
+    entries.push({ label: `── INACTIVE (${inactive.length}) ──` });
+    entries.push(...inactive.map((thread) => ({ thread, label: sessionLabel(thread, attachedId) })));
+  }
+  return entries;
+}
+
+export function isActiveSession(thread) {
+  return thread?.status?.type === "active"
+    || (thread?.turns ?? []).some((turn) => turn.status === "inProgress");
 }
