@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { AppServerClient } from "./app-server-client.js";
 import { activeTurnId, CodexApi, latestActivity } from "./codex-api.js";
 import { formatThread, formatThreads, shortId, statusLabel } from "./format.js";
+import { runTui } from "./tui.js";
 
 export function parseArgs(argv) {
   const options = {
@@ -45,6 +46,7 @@ export function helpText() {
 Usage:
   codexctl                         Open the interactive dashboard
   codexctl watch                   Open the live-refreshing dashboard
+  codexctl ui                      Open the mouse-enabled session cockpit
   codexctl list [--json]           List active and archived threads
   codexctl attach <thread-id>      Resume and inspect a thread
   codexctl resume <thread-id>      Resume a thread
@@ -88,26 +90,31 @@ export async function runCli(argv = process.argv.slice(2), dependencies = {}) {
   const api = dependencies.api ?? new CodexApi(client);
   const stdout = dependencies.stdout ?? process.stdout;
   const stderr = dependencies.stderr ?? process.stderr;
+  const input = dependencies.stdin ?? process.stdin;
+  const interactive = ["dashboard", "watch", "ui"].includes(options.command) && Boolean(input.isTTY && stdout.isTTY);
   const approvals = new Map();
 
   client.on("serverRequest", (request) => {
     if (request.method.endsWith("/requestApproval")) {
       approvals.set(String(request.id), request);
-      stderr.write(`\nApproval requested: ${request.id} (${request.params?.command ?? request.params?.reason ?? request.method})\n`);
-      stderr.write("Use `approve REQUEST_ID accept|decline|cancel` in the dashboard.\n");
+      if (!interactive) {
+        stderr.write(`\nApproval requested: ${request.id} (${request.params?.command ?? request.params?.reason ?? request.method})\n`);
+        stderr.write("Use `approve REQUEST_ID accept|decline|cancel` in the dashboard.\n");
+      }
     }
   });
   client.on("notification", (notification) => {
     if (notification.method === "thread/status/changed") {
       const status = notification.params?.status?.type ?? "unknown";
-      stderr.write(`\nThread ${shortId(notification.params?.threadId)} → ${status}\n`);
+      if (!interactive) stderr.write(`\nThread ${shortId(notification.params?.threadId)} → ${status}\n`);
     }
   });
 
   await client.connect();
   try {
-    if (options.command === "dashboard" || options.command === "watch") {
-      await runDashboard({ api, client, options, stdout, stderr, approvals, input: dependencies.stdin ?? process.stdin });
+    if (options.command === "dashboard" || options.command === "watch" || options.command === "ui") {
+      if (interactive) await runTui({ api, client, options, approvals });
+      else await runDashboard({ api, client, options, stdout, stderr, approvals, input });
     } else {
       await runCommand(options, { api, client, stdout, stderr, approvals, input: dependencies.stdin ?? process.stdin });
     }

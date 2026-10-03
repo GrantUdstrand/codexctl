@@ -36,6 +36,8 @@ installed CLI.
 
 ```text
 codexctl                         interactive dashboard
+codexctl ui                      mouse-enabled session cockpit
+codexctl watch                   live session cockpit
 codexctl list                    active and archived threads
 codexctl list --json             machine-readable thread summaries
 codexctl attach THREAD_ID        resume and inspect a thread
@@ -59,6 +61,18 @@ The dashboard is live by default: it refreshes every second while keeping the
 command prompt available. Use `codexctl watch` for the explicit live-dashboard
 command, or override the interval with `--refresh-ms N` or the
 `CODEXCTL_REFRESH_MS` environment variable.
+
+When run from a real terminal, the dashboard opens as a two-pane cockpit. Use
+the mouse or arrow keys to select a session, press Enter to attach, type a
+reply in the composer, and press Escape to detach. Detaching unsubscribes the
+dashboard from that thread without interrupting its Codex turn, so you can
+move on while it continues in the background. Press Tab to switch between the
+session list and reply box, and Ctrl-C to quit. Piped/non-TTY invocations keep
+the plain readline dashboard for scripting and smoke tests.
+
+When an approval arrives, focus the session list and press `a` to accept, `d`
+to decline, or `c` to cancel. These shortcuts are disabled while typing in the
+reply box.
 
 Inside the dashboard, use `refresh`, `attach ID`, `resume ID`, `fork ID`,
 `interrupt ID [TURN]`, `rename ID NAME`, `archive ID`, `approvals`, or
@@ -118,7 +132,8 @@ Use `--cwd PATH` to filter threads to an exact working directory, and
 - `src/codex-api.js` maps dashboard actions to App Server thread methods and
   extracts latest activity from persisted turn items.
 - `src/format.js` renders the terminal table and thread details.
-- `src/cli.js` provides the interactive dashboard and one-shot commands.
+- `src/tui.js` provides the mouse-enabled two-pane session cockpit.
+- `src/cli.js` provides the dashboard fallback and one-shot commands.
 - `test/` covers protocol handshaking, approval responses, thread pagination,
   lifecycle operations, and table rendering.
 

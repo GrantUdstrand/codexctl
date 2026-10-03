@@ -38,6 +38,26 @@ export class CodexApi {
     return this.client.request("thread/resume", { threadId, ...options });
   }
 
+  startTurn(threadId, text, options = {}) {
+    return this.client.request("turn/start", {
+      threadId,
+      input: [{ type: "text", text }],
+      ...options,
+    });
+  }
+
+  steer(threadId, text, expectedTurnId) {
+    return this.client.request("turn/steer", {
+      threadId,
+      input: [{ type: "text", text }],
+      expectedTurnId,
+    });
+  }
+
+  unsubscribe(threadId) {
+    return this.client.request("thread/unsubscribe", { threadId });
+  }
+
   fork(threadId, options = {}) {
     return this.client.request("thread/fork", { threadId, ...options });
   }
